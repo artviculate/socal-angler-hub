@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-black">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SoCal Angler Hub - 3D Bathymetry & Cyberpunk Tactical HUD</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cyber: {
+                            bg: '#040914',
+                            card: 'rgba(8, 16, 32, 0.75)',
+                            border: '#00f0ff33',
+                            neonCyan: '#00f0ff',
+                            neonGreen: '#39ff14',
+                            neonYellow: '#ffe600',
+                            neonPink: '#ff007f',
+                            deepNavy: '#020b18',
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['JetBrains Mono', 'Fira Code', 'Courier New', 'monospace'],
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'neon-cyan': '0 0 15px rgba(0, 240, 255, 0.4)',
+                        'neon-green': '0 0 15px rgba(57, 255, 20, 0.4)',
+                        'neon-pink': '0 0 15px rgba(255, 0, 127, 0.4)',
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        /* Custom Custom Scrollbars & Glassmorphism Rules */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: rgba(2, 11, 24, 0.8); }
+        ::-webkit-scrollbar-thumb { background: #00f0ff55; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #00f0ff; }
+        
+        .glass-hud {
+            background: rgba(4, 12, 26, 0.82);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            box-shadow: inset 0 0 15px rgba(0, 240, 255, 0.05), 0 8px 32px 0 rgba(0, 0, 0, 0.6);
+        }
+        
+        .glass-card {
+            background: rgba(8, 20, 42, 0.7);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .scanline-overlay {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0, 240, 255, 0.03) 50%,
+                rgba(0, 240, 255, 0.03)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+        }
+
+        /* Pulse animations for tactical UI */
+        @keyframes radar-sweep {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .animate-radar { animation: radar-sweep 4s linear infinite; }
+        
+        /* Map custom tile styling for underwater glow depth simulation */
+        .depth-contour-layer {
+            mix-blend-mode: color-burn;
+            opacity: 0.85;
+        }
+
+        .leaflet-container {
+            background: #020914 !important;
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Tidal water level visual distortion overlay */
+        #tide-waterline-overlay {
+            mix-blend-mode: overlay;
+            transition: opacity 0.3s ease, background 0.5s ease;
+            pointer-events: none;
+        }
+
+        /* Custom range slider styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: rgba(0, 240, 255, 0.15);
+            border-radius: 9999px;
+            height: 6px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #00f0ff;
+            cursor: pointer;
+            box-shadow: 0 0 10px #00f0ff;
+            border: 2px solid #ffffff;
+        }
+    </style>
+</head>
+<body class="h-full w-full overflow-hidden bg-cyber-bg text-slate-100 flex flex-col relative select-none">
+
+    <!-- TOP HUD HEADER NAVIGATION -->
+    <header class="h-14 bg-cyber-bg/90 border-b border-cyber-neonCyan/30 px-4 flex items-center justify-between z-30 shrink-0 relative glass-hud">
+        <div class="flex items-center space-x-3">
+            <div class="relative flex items-center justify-center w-9 h-9 rounded-lg bg-cyan-950/80 border border-cyber-neonCyan/50 shadow-neon-cyan">
+                <i class="fa-solid fa-fish-fins text-cyber-neonCyan text-lg"></i>
+                <span class="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyber-neonCyan"></span>
+                </span>
+            </div>
+            <div>
+                <div class="flex items-center space-x-2">
+                    <h1 class="text-base font-extrabold tracking-wider bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 bg-clip-text text-transparent font-mono uppercase">
+                        SoCal Angler Hub
+                    </h1>
+                    <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">v3.5 3D-HUD</span>
+                </div>
+                <p class="text-[11px] text-slate-400 font-mono hidden sm:block">SOUTHERN CALIFORNIA COASTAL TACTICAL OCEANOGRAPHY</p>
+            </div>
+        </div>
+
+        <!-- Telemetry Center Pill -->
+        <div class="hidden lg:flex items-center space-x-6 font-mono text-xs text-slate-300 bg-slate-900/80 px-4 py-1.5 rounded-full border border-cyan-500/20">
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-location-crosshairs text-cyber-neonCyan animate-pulse"></i>
+                <span id="telemetry-coords">33.6189° N, 117.9298° W</span>
+            </div>
+            <span class="text-slate-600">|</span>
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-water text-teal-400"></i>
+                <span>SST: <strong id="telemetry-sst" class="text-cyan-300">65.8°F</strong></span>
+            </div>
+            <span class="text-slate-600">|</span>
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-gauge-high text-emerald-400"></i>
+                <span>TIDE: <strong id="telemetry-tide" class="text-emerald-300">+4.2ft (Rising)</strong></span>
+            </div>
+            <span class="text-slate-600">|</span>
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-wind text-yellow-400"></i>
+                <span>WIND: <strong id="telemetry-wind" class="text-yellow-300">8kt WNW</strong></span>
+            </div>
+        </div>
+
+        <!-- Action Control Buttons -->
+        <div class="flex items-center space-x-2">
+            <button id="btn-open-creator-modal" class="px-3 py-1.5 rounded-lg bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 text-xs font-mono font-semibold transition flex items-center space-x-1.5 shadow-sm">
+                <i class="fa-solid fa-star text-yellow-400"></i>
+                <span class="hidden sm:inline">Join as Creator</span>
+            </button>
+            <button id="btn-toggle-logbook" class="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyber-neonCyan border border-cyan-400/40 text-xs font-mono font-semibold transition flex items-center space-x-1.5 shadow-neon-cyan">
+                <i class="fa-solid fa-book-bookmark"></i>
+                <span class="hidden sm:inline">Catch Wall & Log</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN INTERACTIVE CANVAS VIEWPORT -->
+    <main class="relative flex-1 w-full h-full overflow-hidden bg-slate-950">
+        
+        <!-- Full-screen Leaflet Map with Custom Satellite & Bathymetry Base Layer -->
+        <div id="map" class="absolute inset-0 w-full h-full z-0"></div>
+
+        <!-- Particle Current Overlay Canvas (WebGL/Canvas) -->
+        <canvas id="particle-canvas" class="absolute inset-0 w-full h-full z-10 pointer-events-none"></canvas>
+
+        <!-- Dynamic Tidal Waterline Simulated Screen Overlay -->
+        <div id="tide-waterline-overlay" class="absolute inset-0 z-10 opacity-30 bg-gradient-to-b from-cyan-950/40 via-transparent to-blue-950/60 pointer-events-none"></div>
+
+        <!-- Scanline & HUD Tech Grid Overlay -->
+        <div class="scanline-overlay absolute inset-0 z-10 pointer-events-none"></div>
+
+        <!-- FLOATING HUD CONTROL PANEL (TOP LEFT) -->
+        <div class="absolute top-4 left-4 z-20 w-80 max-w-[calc(100vw-2rem)] flex flex-col space-y-3 pointer-events-auto">
+            
+            <!-- Map Layers & Bathymetry Control Box -->
+            <div class="glass-hud rounded-xl p-3.5 flex flex-col space-y-3 font-mono">
+                <div class="flex items-center justify-between border-b border-cyan-500/20 pb-2">
+                    <div class="flex items-center space-x-2 text-cyber-neonCyan font-bold text-xs uppercase tracking-wider">
+                        <i class="fa-solid fa-layer-group text-sm"></i>
+                        <span>3D Oceanography Layers</span>
+                    </div>
+                    <span class="text-[10px] text-cyan-400/70 bg-cyan-950 px-1.5 py-0.5 rounded border border-cyan-800">NOAA / ESRI</span>
+                </div>
+
+                <!-- Layer Toggles -->
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <!-- 3D Bathymetry & Hillshade -->
+                    <button id="toggle-bathymetry" class="px-2.5 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-400/50 hover:bg-cyan-500/30 transition flex flex-col items-center justify-center text-center space-y-1">
+                        <i class="fa-solid fa-mountain-sun text-cyan-400 text-base"></i>
+                        <span class="text-[11px] font-semibold">3D Bathymetry</span>
+                        <span class="text-[9px] text-cyan-400/70">Depth Relief</span>
+                    </button>
+
+                    <!-- SST Heatmap -->
+                    <button id="toggle-sst" class="px-2.5 py-2 rounded-lg bg-slate-800/80 text-slate-400 border border-slate-700 hover:bg-slate-700/80 transition flex flex-col items-center justify-center text-center space-y-1">
+                        <i class="fa-solid fa-temperature-arrow-up text-pink-400 text-base"></i>
+                        <span class="text-[11px] font-semibold">SST Heatmap</span>
+                        <span class="text-[9px] text-slate-400">Temp Breaks</span>
+                    </button>
+
+                    <!-- Particle Currents -->
+                    <button id="toggle-particles" class="px-2.5 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-400/50 hover:bg-cyan-500/30 transition flex flex-col items-center justify-center text-center space-y-1 col-span-2">
+                        <div class="flex items-center space-x-1.5">
+                            <i class="fa-solid fa-water text-emerald-400 text-sm"></i>
+                            <span class="text-[11px] font-semibold">Animated Current Particles</span>
+                        </div>
+                        <span class="text-[9px] text-emerald-400/80">Currents • Swell Vectors • Wind Drift</span>
+                    </button>
+                </div>
+
+                <!-- Particle Velocity & Opacity Sliders -->
+                <div class="space-y-2 pt-1 border-t border-slate-800">
+                    <div class="flex justify-between items-center text-[10px] text-slate-300">
+                        <span>Current Flow Speed:</span>
+                        <span id="particle-speed-label" class="text-cyber-neonCyan font-bold">1.5x</span>
+                    </div>
+                    <input type="range" id="slider-particle-speed" min="0.2" max="3.0" step="0.1" value="1.5" class="w-full">
+                </div>
+            </div>
+
+            <!-- DYNAMIC TIDE SIMULATOR CONTROL BOX -->
+            <div class="glass-hud rounded-xl p-3.5 flex flex-col space-y-2.5 font-mono">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-2 text-emerald-400 font-bold text-xs uppercase tracking-wider">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                        <span>Live Tide Simulator</span>
+                    </div>
+                    <button id="btn-tide-play" class="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 flex items-center space-x-1">
+                        <i class="fa-solid fa-play text-[10px]"></i>
+                        <span>Auto Play</span>
+                    </button>
+                </div>
+
+                <!-- Mini Canvas Tide Chart -->
+                <div class="relative h-20 w-full bg-slate-950/80 rounded-lg border border-slate-800 overflow-hidden p-1">
+                    <canvas id="tide-graph-canvas" class="w-full h-full"></canvas>
+                </div>
+
+                <!-- Interactive Time / Tide Scrub Slider -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center text-[10px]">
+                        <span class="text-slate-400">Time Scrub: <strong id="tide-scrub-time" class="text-cyan-300">12:00 PM</strong></span>
+                        <span class="text-slate-400">Height: <strong id="tide-scrub-height" class="text-emerald-300">+3.8 ft</strong></span>
+                    </div>
+                    <input type="range" id="slider-tide-scrub" min="0" max="24" step="0.25" value="12" class="w-full">
+                    <div class="flex justify-between text-[8px] text-slate-500 font-mono">
+                        <span>00:00 (LOW -1.1')</span>
+                        <span>12:00 (HIGH +5.4')</span>
+                        <span>23:59 (MID +2.2')</span>
+                    </div>
+                </div>
+
+                <div class="bg-cyan-950/40 p-2 rounded text-[10px] text-cyan-200 border border-cyan-800/40 flex items-start space-x-2">
+                    <i class="fa-solid fa-circle-info text-cyan-400 mt-0.5 shrink-0"></i>
+                    <span><strong>Angler Tip:</strong> Scrub to negative tides (-0.5ft or lower) to reveal exposed mussel beds and reef ambush zones for Halibut & Calico.</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- FLOATING QUICK SPOTS & FILTER PANEL (TOP RIGHT) -->
+        <div class="absolute top-4 right-4 z-20 w-72 max-w-[calc(100vw-2rem)] flex flex-col space-y-3 pointer-events-auto">
+            
+            <div class="glass-hud rounded-xl p-3 flex flex-col space-y-2.5 font-mono">
+                <div class="flex items-center justify-between border-b border-cyan-500/20 pb-2">
+                    <div class="flex items-center space-x-2 text-yellow-400 font-bold text-xs uppercase tracking-wider">
+                        <i class="fa-solid fa-map-pin"></i>
+                        <span>SoCal Hotspot Presets</span>
+                    </div>
+                    <span class="text-[10px] text-slate-400">6 Spots</span>
+                </div>
+
+                <!-- Hotspot Quick Fly To Buttons -->
+                <div class="grid grid-cols-2 gap-1.5 text-xs">
+                    <button onclick="flyToSpot(33.6189, -117.9298, 14)" class="px-2 py-1.5 rounded bg-slate-900/80 hover:bg-cyan-950/80 text-cyan-300 border border-slate-700/80 hover:border-cyan-500/50 text-left transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-anchor text-cyan-400 text-xs"></i>
+                        <span class="truncate text-[11px]">Newport Jetty</span>
+                    </button>
+                    <button onclick="flyToSpot(33.425, -117.615, 13)" class="px-2 py-1.5 rounded bg-slate-900/80 hover:bg-cyan-950/80 text-cyan-300 border border-slate-700/80 hover:border-cyan-500/50 text-left transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-umbrella-beach text-emerald-400 text-xs"></i>
+                        <span class="truncate text-[11px]">San Onofre Surf</span>
+                    </button>
+                    <button onclick="flyToSpot(33.344, -118.326, 12)" class="px-2 py-1.5 rounded bg-slate-900/80 hover:bg-cyan-950/80 text-cyan-300 border border-slate-700/80 hover:border-cyan-500/50 text-left transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-ship text-yellow-400 text-xs"></i>
+                        <span class="truncate text-[11px]">Catalina Kelp</span>
+                    </button>
+                    <button onclick="flyToSpot(32.84, -117.27, 13)" class="px-2 py-1.5 rounded bg-slate-900/80 hover:bg-cyan-950/80 text-cyan-300 border border-slate-700/80 hover:border-cyan-500/50 text-left transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-fish text-purple-400 text-xs"></i>
+                        <span class="truncate text-[11px]">La Jolla Canyon</span>
+                    </button>
+                    <button onclick="flyToSpot(34.03, -118.57, 13)" class="px-2 py-1.5 rounded bg-slate-900/80 hover:bg-cyan-950/80 text-cyan-300 border border-slate-700/80 hover:border-cyan-500/50 text-left transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-water text-cyan-400 text-xs"></i>
+                        <span class="truncate text-[11px]">Point Dume Reef</span>
+                    </button>
+                    <button onclick="flyToSpot(33.72, -118.27, 13)" class="px-2 py-1.5 rounded bg-slate-900/80 hover:bg-cyan-950/80 text-cyan-300 border border-slate-700/80 hover:border-cyan-500/50 text-left transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-building text-blue-400 text-xs"></i>
+                        <span class="truncate text-[11px]">San Pedro Break</span>
+                    </button>
+                </div>
+
+                <!-- Feed Filter Buttons -->
+                <div class="pt-2 border-t border-slate-800 flex flex-col space-y-1.5">
+                    <span class="text-[10px] text-slate-400">Map Pins & Log Filter:</span>
+                    <div class="flex items-center space-x-1 text-[10px]">
+                        <button id="filter-all" onclick="setPostFilter('all')" class="flex-1 py-1 rounded bg-cyan-500/30 text-cyan-200 border border-cyan-400 font-bold">All</button>
+                        <button id="filter-verified" onclick="setPostFilter('verified')" class="flex-1 py-1 rounded bg-slate-900 text-yellow-300 border border-yellow-500/40 hover:bg-yellow-500/20">
+                            ★ Verified
+                        </button>
+                        <button id="filter-privacy" onclick="setPostFilter('privacy')" class="flex-1 py-1 rounded bg-slate-900 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/20">
+                            <i class="fa-solid fa-shield-halved"></i> Shielded
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Legend HUD Widget -->
+            <div class="glass-hud rounded-xl p-3 flex flex-col space-y-2 font-mono text-xs">
+                <div class="text-[11px] font-bold text-cyan-300 uppercase">3D Depth Contour Color Legend</div>
+                <div class="h-3 w-full rounded bg-gradient-to-r from-teal-300 via-cyan-500 via-blue-600 via-indigo-800 to-purple-950 border border-slate-700"></div>
+                <div class="flex justify-between text-[9px] text-slate-400">
+                    <span>0ft (Reef)</span>
+                    <span>100ft</span>
+                    <span>300ft</span>
+                    <span>1000ft+ Canyon</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- BOTTOM CENTER SPECIES REGULATION & TACTICAL STATUS BAR -->
+        <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-11/12 max-w-2xl pointer-events-auto">
+            <div class="glass-hud rounded-2xl p-3 font-mono flex items-center justify-between space-x-4 shadow-2xl">
+                
+                <!-- Target Species Status -->
+                <div class="flex items-center space-x-3 overflow-x-auto py-0.5 no-scrollbar">
+                    <div class="flex items-center space-x-2 shrink-0">
+                        <span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs border border-emerald-500/30 font-bold">ACTIVE TARGET:</span>
+                        <span class="text-xs font-bold text-cyan-200">California Halibut</span>
+                    </div>
+                    <span class="text-slate-600 shrink-0">|</span>
+                    <div class="text-[11px] text-slate-300 shrink-0">
+                        Min Size: <strong class="text-emerald-400">22"</strong>
+                    </div>
+                    <span class="text-slate-600 shrink-0">|</span>
+                    <div class="text-[11px] text-slate-300 shrink-0">
+                        Limit: <strong class="text-yellow-400">5 / day</strong>
+                    </div>
+                    <span class="text-slate-600 shrink-0">|</span>
+                    <div class="text-[11px] text-cyan-300 shrink-0">
+                        Top Rig: <span class="text-slate-200">Bounce Ball / Live Smelt</span>
+                    </div>
+                </div>
+
+                <!-- Refresh / Re-center Location Button -->
+                <button onclick="recenterUserLocation()" class="p-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 border border-cyan-400/50 shrink-0 transition" title="Center Location">
+                    <i class="fa-solid fa-crosshairs text-base"></i>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- RIGHT SIDE DRAWER: CATCH LOG & CREATOR WALL -->
+    <div id="drawer-logbook" class="fixed inset-y-0 right-0 z-40 w-full max-w-md bg-cyber-bg/95 border-l border-cyan-500/30 transform translate-x-full transition-transform duration-300 ease-in-out glass-hud flex flex-col font-mono shadow-2xl">
+        
+        <!-- Drawer Header -->
+        <div class="p-4 border-b border-cyan-500/30 flex items-center justify-between bg-cyan-950/40">
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-cubes text-cyber-neonCyan text-lg"></i>
+                <div>
+                    <h2 class="text-sm font-extrabold text-cyan-300 uppercase tracking-wider">SoCal Logbook & Catch Wall</h2>
+                    <p class="text-[10px] text-slate-400">VERIFIED CREATOR & COMMUNITY CATCH LOGS</p>
+                </div>
+            </div>
+            <button id="btn-close-logbook" class="w-8 h-8 rounded-lg bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center transition">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+        </div>
+
+        <!-- Drawer Action Bar -->
+        <div class="p-3 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
+            <button id="btn-open-post-modal" class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-cyan-500 to-teal-500 text-black font-bold text-xs uppercase hover:opacity-90 transition flex items-center justify-center space-x-2 shadow-neon-cyan">
+                <i class="fa-solid fa-plus-circle text-sm"></i>
+                <span>Log New Catch (With Privacy Shield)</span>
+            </button>
+        </div>
+
+        <!-- Catch Feed List Container -->
+        <div id="catch-feed-container" class="flex-1 overflow-y-auto p-4 space-y-4">
+            <!-- Feed items populated via JavaScript -->
+        </div>
+    </div>
+
+    <!-- MODAL: JOIN AS VERIFIED CREATOR / CAPTAIN -->
+    <div id="modal-creator" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden font-mono">
+        <div class="w-full max-w-md bg-slate-900 border border-yellow-500/40 rounded-2xl p-5 shadow-2xl glass-hud relative flex flex-col space-y-4">
+            <button onclick="toggleModal('modal-creator', false)" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+
+            <div class="flex items-center space-x-3 border-b border-yellow-500/20 pb-3">
+                <div class="w-10 h-10 rounded-xl bg-yellow-500/20 border border-yellow-500/40 flex items-center justify-center text-yellow-400 text-xl">
+                    <i class="fa-solid fa-star"></i>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold text-yellow-300 uppercase">Creator & Captain Verification</h3>
+                    <p class="text-[10px] text-slate-400">Link your YouTube, IG, or Charter business to the map</p>
+                </div>
+            </div>
+
+            <form id="form-creator-register" onsubmit="handleCreatorRegister(event)" class="space-y-3 text-xs">
+                <div>
+                    <label class="block text-slate-300 mb-1">Full Name or Creator Handle:</label>
+                    <input type="text" id="creator-handle" required placeholder="e.g. @SoCalSurfAngler" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-yellow-400 outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-slate-300 mb-1">Creator Category:</label>
+                    <select id="creator-type" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-yellow-400 outline-none">
+                        <option value="★ Verified Creator">YouTube / Social Creator</option>
+                        <option value="⚓ Charter Captain">Licensed Charter Captain</option>
+                        <option value="🎣 Local Tackle Shop">Tackle Shop / Guide Service</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-slate-300 mb-1">Primary Channel Link (YouTube / IG / TikTok):</label>
+                    <input type="url" id="creator-url" required placeholder="https://youtube.com/@yourchannel" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-yellow-400 outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-slate-300 mb-1">Go-To Target Species & Location:</label>
+                    <input type="text" id="creator-specialty" placeholder="e.g. Newport Beach Surf Halibut & Leopard Sharks" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-yellow-400 outline-none">
+                </div>
+
+                <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-2.5 text-[10px] text-yellow-200/90 leading-relaxed">
+                    <i class="fa-solid fa-circle-check text-yellow-400 mr-1"></i>
+                    <strong>Benefits:</strong> Verified gold badge on map pins, direct social channel click-throughs on posts, and custom branding on exported Social Brag Cards.
+                </div>
+
+                <button type="submit" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-yellow-500 to-amber-600 text-black font-extrabold text-xs uppercase shadow-lg hover:brightness-110 transition">
+                    Submit Verification Request
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: LOG NEW CATCH -->
+    <div id="modal-post-catch" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden font-mono">
+        <div class="w-full max-w-lg bg-slate-900 border border-cyan-500/40 rounded-2xl p-5 shadow-2xl glass-hud relative flex flex-col space-y-4 max-h-[90vh] overflow-y-auto">
+            <button onclick="toggleModal('modal-post-catch', false)" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+
+            <div class="flex items-center space-x-3 border-b border-cyan-500/20 pb-3">
+                <div class="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyber-neonCyan text-xl">
+                    <i class="fa-solid fa-fish"></i>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold text-cyan-300 uppercase">Log Catch & Drop Map Pin</h3>
+                    <p class="text-[10px] text-slate-400">Share with privacy shield protection</p>
+                </div>
+            </div>
+
+            <form id="form-log-catch" onsubmit="handlePostCatch(event)" class="space-y-3 text-xs">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-slate-300 mb-1">Angler Name / Handle:</label>
+                        <input type="text" id="post-author" required placeholder="@YourHandle" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-cyan-400 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 mb-1">Species Caught:</label>
+                        <select id="post-species" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-cyan-400 outline-none">
+                            <option value="California Halibut">California Halibut</option>
+                            <option value="Calico Bass">Calico Bass</option>
+                            <option value="Yellowtail">Yellowtail</option>
+                            <option value="White Seabass">White Seabass</option>
+                            <option value="Leopard Shark">Leopard Shark</option>
+                            <option value="Surfperch">Surfperch</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-slate-300 mb-1">Length / Weight:</label>
+                        <input type="text" id="post-size" placeholder="e.g. 28 inches / 9.5 lbs" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-cyan-400 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 mb-1">Bait / Rig Used:</label>
+                        <input type="text" id="post-rig" placeholder="e.g. Lucky Craft 110 FM" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-cyan-400 outline-none">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-slate-300 mb-1">Catch Photo URL (or default preset):</label>
+                    <input type="text" id="post-image-url" placeholder="https://..." class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-cyan-200 focus:border-cyan-400 outline-none">
+                </div>
+
+                <!-- Privacy Shield Toggle Switch -->
+                <div class="p-3 rounded-xl bg-cyan-950/40 border border-emerald-500/40 flex items-center justify-between">
+                    <div>
+                        <div class="flex items-center space-x-1.5 text-emerald-400 font-bold">
+                            <i class="fa-solid fa-shield-halved text-sm"></i>
+                            <span>Secret Spot Privacy Shield</span>
+                        </div>
+                        <p class="text-[10px] text-slate-400">Obfuscates exact GPS location by 1-mile random blur on map</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="post-privacy-shield" checked class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                    </label>
+                </div>
+
+                <button type="submit" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 text-black font-extrabold text-xs uppercase shadow-neon-cyan hover:brightness-110 transition">
+                    Publish Catch & Pin to Map
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: INSTAGRAM SOCIAL BRAG CARD GENERATOR -->
+    <div id="modal-brag-card" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md hidden font-mono">
+        <div class="w-full max-w-lg bg-slate-900 border border-cyan-500/50 rounded-2xl p-5 shadow-2xl glass-hud relative flex flex-col space-y-4">
+            <button onclick="toggleModal('modal-brag-card', false)" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+
+            <div class="flex items-center space-x-2 border-b border-cyan-500/20 pb-2">
+                <i class="fa-solid fa-share-nodes text-cyber-neonCyan text-lg"></i>
+                <div>
+                    <h3 class="text-sm font-bold text-cyan-300 uppercase">1080x1350 Cyber Brag Card</h3>
+                    <p class="text-[10px] text-slate-400">Generated for Instagram Stories & TikTok</p>
+                </div>
+            </div>
+
+            <!-- Canvas Render Container -->
+            <div class="flex justify-center bg-slate-950 p-2 rounded-xl border border-slate-800">
+                <canvas id="brag-card-canvas" width="540" height="675" class="w-full max-w-[320px] rounded-lg shadow-2xl border border-cyan-500/30"></canvas>
+            </div>
+
+            <div class="flex items-center space-x-2">
+                <button onclick="downloadBragCard()" class="flex-1 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-xs uppercase transition shadow-neon-cyan flex items-center justify-center space-x-1.5">
+                    <i class="fa-solid fa-download"></i>
+                    <span>Download Brag Card Image</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // Global State & Data Store
+        const state = {
+            map: null,
+            userLocation: [33.6189, -117.9298], // Default Newport Beach
+            currentZoom: 13,
+            bathymetryLayer: null,
+            sstLayer: null,
+            particlesEnabled: true,
+            particleSpeed: 1.5,
+            tideHour: 12.0,
+            tidePlaying: false,
+            tideInterval: null,
+            activeFilter: 'all',
+            verifiedCreators: [],
+            catches: [
+                {
+                    id: 1,
+                    author: "@SoCalSurfPro",
+                    isVerified: true,
+                    creatorBadge: "★ Verified Creator",
+                    socialUrl: "https://youtube.com",
+                    species: "California Halibut",
+                    size: "31.5 inches / 12 lbs",
+                    rig: "Lucky Craft Flash Minnow 110",
+                    locationName: "Newport Jetty Trench",
+                    lat: 33.6189,
+                    lng: -117.9298,
+                    privacyShield: false,
+                    timestamp: "2 hours ago",
+                    likes: 42,
+                    imageUrl: "https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&w=800&q=80",
+                    notes: "Hooked right at the tide shift on a 3D depth shelf break!"
+                },
+                {
+                    id: 2,
+                    author: "@CaptainDave_Kelp",
+                    isVerified: true,
+                    creatorBadge: "⚓ Charter Captain",
+                    socialUrl: "https://instagram.com",
+                    species: "Yellowtail",
+                    size: "24.0 lbs",
+                    rig: "Surface Iron (Blue/White)",
+                    locationName: "Catalina East End Reef",
+                    lat: 33.3440,
+                    lng: -118.3260,
+                    privacyShield: true,
+                    timestamp: "5 hours ago",
+                    likes: 89,
+                    imageUrl: "https://images.unsplash.com/photo-1534043464124-3be32fe000c9?auto=format&fit=crop&w=800&q=80",
+                    notes: "Boated 4 yellowtail pushing bait along the 66°F SST thermal break edge."
+                },
+                {
+                    id: 3,
+                    author: "@SanDiegoKayakAngler",
+                    isVerified: false,
+                    creatorBadge: null,
+                    socialUrl: null,
+                    species: "Calico Bass",
+                    size: "21 inches (Released)",
+                    rig: "5-inch Hookup Bait Jighead",
+                    locationName: "La Jolla Kelp Bed",
+                    lat: 32.8400,
+                    lng: -117.2700,
+                    privacyShield: true,
+                    timestamp: "1 day ago",
+                    likes: 19,
+                    imageUrl: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80",
+                    notes: "Thick kelp canopy holding big pressure bass."
+                }
+            ]
+        };
+
+        window.onload = function() {
+            initMap();
+            initParticleCanvas();
+            initTideChart();
+            renderCatchFeed();
+            setupEventListeners();
+        };
+
+        function initMap() {
+            // Initialize Leaflet Map
+            state.map = L.map('map', {
+                zoomControl: false,
+                attributionControl: false
+            }).setView(state.userLocation, state.currentZoom);
+
+            // Esri World Imagery Base Satellite Layer
+            const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 18
+            }).addTo(state.map);
+
+            // OpenSeaMap / NOAA Depth Contour Tile Overlay Layer (Simulated via CSS depth tinting)
+            state.bathymetryLayer = L.tileLayer('https://{s}.tile.gebco.net/gebco_subice/{z}/{x}/{y}.png', {
+                maxZoom: 14,
+                opacity: 0.55,
+                className: 'depth-contour-layer'
+            }).addTo(state.map);
+
+            // SST Thermal Layer Overlay (Simulated Heatmap Gradient overlay using open satellite weather tiles)
+            state.sstLayer = L.tileLayer('https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=439d4b804bc8187953eb36d2a8c26a02', {
+                maxZoom: 12,
+                opacity: 0.6
+            });
+
+            // Map Pan / Telemetry Event Update
+            state.map.on('move', function() {
+                const center = state.map.getCenter();
+                document.getElementById('telemetry-coords').innerText = `${center.lat.toFixed(4)}° N, ${center.lng.toFixed(4)}° W`;
+            });
+
+            // Add Initial Markers for Catches
+            renderMapMarkers();
+        }
+
+        let mapMarkers = [];
+
+        function renderMapMarkers() {
+            // Clear existing
+            mapMarkers.forEach(m => state.map.removeLayer(m));
+            mapMarkers = [];
+
+            const filtered = getFilteredCatches();
+
+            filtered.forEach(item => {
+                // Apply Secret Spot Privacy Shield jitter if enabled
+                let displayLat = item.lat;
+                let displayLng = item.lng;
+
+                if (item.privacyShield) {
+                    displayLat += (Math.random() - 0.5) * 0.015;
+                    displayLng += (Math.random() - 0.5) * 0.015;
+                }
+
+                // Custom HTML Marker Icon
+                const iconHtml = `
+                    <div class="relative group cursor-pointer">
+                        <div class="w-8 h-8 rounded-full border-2 ${item.isVerified ? 'border-yellow-400 bg-yellow-950/80 shadow-neon-yellow' : 'border-cyan-400 bg-cyan-950/80 shadow-neon-cyan'} flex items-center justify-center text-white text-xs font-bold transition transform group-hover:scale-125">
+                            <i class="fa-solid ${item.isVerified ? 'fa-star text-yellow-400' : 'fa-fish text-cyan-300'}"></i>
+                        </div>
+                        ${item.privacyShield ? `<span class="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border border-black rounded-full flex items-center justify-center text-[7px] text-black font-black"><i class="fa-solid fa-shield"></i></span>` : ''}
+                    </div>
+                `;
+
+                const customIcon = L.divIcon({
+                    html: iconHtml,
+                    className: 'custom-map-pin',
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 16]
+                });
+
+                const marker = L.marker([displayLat, displayLng], { icon: customIcon }).addTo(state.map);
+
+                // Popup Window
+                const popupContent = `
+                    <div class="p-2.5 font-mono text-xs bg-slate-900 text-slate-100 rounded-xl border border-cyan-500/40 w-56 shadow-2xl">
+                        <div class="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1.5">
+                            <span class="font-bold text-cyan-300 truncate">${item.author}</span>
+                            ${item.creatorBadge ? `<span class="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 font-bold">${item.creatorBadge}</span>` : ''}
+                        </div>
+                        <div class="font-bold text-emerald-400 text-sm">${item.species}</div>
+                        <div class="text-[10px] text-slate-300">${item.size}</div>
+                        <div class="text-[9px] text-cyan-400/80 mt-1">${item.privacyShield ? '🛡️ Shielded 1-Mile Area' : item.locationName}</div>
+                        <button onclick="openBragCardModal(${item.id})" class="mt-2 w-full py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 border border-cyan-400/40 text-[10px] font-bold">
+                            <i class="fa-solid fa-share-nodes"></i> Generate Brag Card
+                        </button>
+                    </div>
+                `;
+
+                marker.bindPopup(popupContent);
+                mapMarkers.push(marker);
+            });
+        }
+
+        let canvas, ctx;
+        let particles = [];
+        const numParticles = 120;
+
+        function initParticleCanvas() {
+            canvas = document.getElementById('particle-canvas');
+            ctx = canvas.getContext('2d');
+            resizeParticleCanvas();
+
+            window.addEventListener('resize', resizeParticleCanvas);
+
+            // Initialize Particles
+            particles = [];
+            for (let i = 0; i < numParticles; i++) {
+                particles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    vx: (Math.random() - 0.2) * 1.8,
+                    vy: (Math.random() + 0.3) * 1.2,
+                    length: Math.random() * 20 + 10,
+                    opacity: Math.random() * 0.6 + 0.2,
+                    hue: Math.random() > 0.3 ? 180 : 150 // Teal/Cyan currents vs Emerald rip channels
+                });
+            }
+
+            requestAnimationFrame(animateParticles);
+        }
+
+        function resizeParticleCanvas() {
+            if (!canvas) return;
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        function animateParticles() {
+            if (!ctx) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (state.particlesEnabled) {
+                const speedMult = state.particleSpeed;
+
+                particles.forEach(p => {
+                    p.x += p.vx * speedMult;
+                    p.y += p.vy * speedMult;
+
+                    // Loop particles offscreen
+                    if (p.x > canvas.width) p.x = 0;
+                    if (p.x < 0) p.x = canvas.width;
+                    if (p.y > canvas.height) p.y = 0;
+                    if (p.y < 0) p.y = canvas.height;
+
+                    // Render Flow Streamline Vectors
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y);
+                    ctx.lineTo(p.x - p.vx * p.length * 0.5, p.y - p.vy * p.length * 0.5);
+                    ctx.strokeStyle = `hsla(${p.hue}, 100%, 60%, ${p.opacity})`;
+                    ctx.lineWidth = 1.5;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+
+                    // Glowing Head Dot
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 1.2, 0, Math.PI * 2);
+                    ctx.fillStyle = `#00f0ff`;
+                    ctx.fill();
+                });
+            }
+
+            requestAnimationFrame(animateParticles);
+        }
+
+        function initTideChart() {
+            const tideCanvas = document.getElementById('tide-graph-canvas');
+            if (!tideCanvas) return;
+            const tCtx = tideCanvas.getContext('2d');
+            
+            // Adjust resolution
+            tideCanvas.width = tideCanvas.clientWidth * 2;
+            tideCanvas.height = tideCanvas.clientHeight * 2;
+
+            function drawTideGraph() {
+                const w = tideCanvas.width;
+                const h = tideCanvas.height;
+                tCtx.clearRect(0, 0, w, h);
+
+                // Zero tide line
+                const zeroY = h * 0.65;
+                tCtx.beginPath();
+                tCtx.moveTo(0, zeroY);
+                tCtx.lineTo(w, zeroY);
+                tCtx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                tCtx.lineWidth = 1;
+                tCtx.setLineDash([4, 4]);
+                tCtx.stroke();
+                tCtx.setLineDash([]);
+
+                // Sine Curve for 24-hr Tide Cycle
+                tCtx.beginPath();
+                tCtx.moveTo(0, zeroY);
+
+                for (let x = 0; x <= w; x++) {
+                    const normX = x / w;
+                    // Dual tide swell formula
+                    const yVal = Math.sin(normX * Math.PI * 3.5 - 1) * (h * 0.35) + Math.cos(normX * Math.PI * 1.8) * (h * 0.1);
+                    const y = zeroY - yVal;
+                    if (x === 0) tCtx.moveTo(x, y);
+                    else tCtx.lineTo(x, y);
+                }
+
+                tCtx.strokeStyle = '#00f0ff';
+                tCtx.lineWidth = 3;
+                tCtx.stroke();
+
+                // Draw Current Time Indicator Marker
+                const scrubRatio = state.tideHour / 24.0;
+                const markerX = scrubRatio * w;
+                const markerYVal = Math.sin(scrubRatio * Math.PI * 3.5 - 1) * (h * 0.35) + Math.cos(scrubRatio * Math.PI * 1.8) * (h * 0.1);
+                const markerY = zeroY - markerYVal;
+
+                // Vertical Scrub Bar
+                tCtx.beginPath();
+                tCtx.moveTo(markerX, 0);
+                tCtx.lineTo(markerX, h);
+                tCtx.strokeStyle = '#39ff14';
+                tCtx.lineWidth = 2;
+                tCtx.stroke();
+
+                // Glowing Node
+                tCtx.beginPath();
+                tCtx.arc(markerX, markerY, 6, 0, Math.PI * 2);
+                tCtx.fillStyle = '#39ff14';
+                tCtx.shadowColor = '#39ff14';
+                tCtx.shadowBlur = 10;
+                tCtx.fill();
+                tCtx.shadowBlur = 0;
+            }
+
+            drawTideGraph();
+            window.updateTideGraph = drawTideGraph;
+        }
+
+        function setupEventListeners() {
+            // Layer Toggles
+            document.getElementById('toggle-bathymetry').addEventListener('click', function() {
+                if (state.map.hasLayer(state.bathymetryLayer)) {
+                    state.map.removeLayer(state.bathymetryLayer);
+                    this.classList.remove('bg-cyan-500/20', 'border-cyan-400/50', 'text-cyan-200');
+                    this.classList.add('bg-slate-800', 'border-slate-700', 'text-slate-400');
+                } else {
+                    state.map.addLayer(state.bathymetryLayer);
+                    this.classList.add('bg-cyan-500/20', 'border-cyan-400/50', 'text-cyan-200');
+                    this.classList.remove('bg-slate-800', 'border-slate-700', 'text-slate-400');
+                }
+            });
+
+            document.getElementById('toggle-sst').addEventListener('click', function() {
+                if (state.map.hasLayer(state.sstLayer)) {
+                    state.map.removeLayer(state.sstLayer);
+                    this.classList.remove('bg-pink-500/20', 'border-pink-400/50', 'text-pink-200');
+                    this.classList.add('bg-slate-800', 'border-slate-700', 'text-slate-400');
+                } else {
+                    state.map.addLayer(state.sstLayer);
+                    this.classList.add('bg-pink-500/20', 'border-pink-400/50', 'text-pink-200');
+                    this.classList.remove('bg-slate-800', 'border-slate-700', 'text-slate-400');
+                }
+            });
+
+            document.getElementById('toggle-particles').addEventListener('click', function() {
+                state.particlesEnabled = !state.particlesEnabled;
+                this.classList.toggle('opacity-50');
+            });
+
+            document.getElementById('slider-particle-speed').addEventListener('input', function(e) {
+                state.particleSpeed = parseFloat(e.target.value);
+                document.getElementById('particle-speed-label').innerText = state.particleSpeed.toFixed(1) + 'x';
+            });
+
+            // Dynamic Tide Scrub Slider
+            document.getElementById('slider-tide-scrub').addEventListener('input', function(e) {
+                state.tideHour = parseFloat(e.target.value);
+                updateTideSimulationUI();
+            });
+
+            // Tide Auto Play Button
+            document.getElementById('btn-tide-play').addEventListener('click', function() {
+                state.tidePlaying = !state.tidePlaying;
+                this.innerHTML = state.tidePlaying ? `<i class="fa-solid fa-pause text-[10px]"></i><span>Pause</span>` : `<i class="fa-solid fa-play text-[10px]"></i><span>Auto Play</span>`;
+
+                if (state.tidePlaying) {
+                    state.tideInterval = setInterval(() => {
+                        state.tideHour = (state.tideHour + 0.25) % 24;
+                        document.getElementById('slider-tide-scrub').value = state.tideHour;
+                        updateTideSimulationUI();
+                    }, 200);
+                } else {
+                    clearInterval(state.tideInterval);
+                }
+            });
+
+            // Logbook Drawer Open/Close
+            document.getElementById('btn-toggle-logbook').addEventListener('click', () => {
+                document.getElementById('drawer-logbook').classList.remove('translate-x-full');
+            });
+            document.getElementById('btn-close-logbook').addEventListener('click', () => {
+                document.getElementById('drawer-logbook').classList.add('translate-x-full');
+            });
+
+            // Modals Trigger
+            document.getElementById('btn-open-creator-modal').addEventListener('click', () => toggleModal('modal-creator', true));
+            document.getElementById('btn-open-post-modal').addEventListener('click', () => toggleModal('modal-post-catch', true));
+        }
+
+        function updateTideSimulationUI() {
+            const hr = Math.floor(state.tideHour);
+            const min = Math.round((state.tideHour - hr) * 60);
+            const timeStr = `${hr.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
+
+            // Calculate height height formula
+            const height = (Math.sin(state.tideHour / 24 * Math.PI * 3.5 - 1) * 3.2 + 2.2).toFixed(1);
+
+            document.getElementById('tide-scrub-time').innerText = timeStr;
+            document.getElementById('tide-scrub-height').innerText = (height >= 0 ? '+' : '') + height + ' ft';
+            document.getElementById('telemetry-tide').innerText = (height >= 0 ? '+' : '') + height + ' ft';
+
+            // Visually alter tide overlay opacity based on water level
+            const overlay = document.getElementById('tide-waterline-overlay');
+            if (overlay) {
+                const opacity = Math.min(0.6, Math.max(0.1, (parseFloat(height) + 1.5) / 7.0));
+                overlay.style.opacity = opacity;
+            }
+
+            if (window.updateTideGraph) window.updateTideGraph();
+        }
+
+        function toggleModal(modalId, show) {
+            const el = document.getElementById(modalId);
+            if (!el) return;
+            if (show) el.classList.remove('hidden');
+            else el.classList.add('hidden');
+        }
+
+        function flyToSpot(lat, lng, zoom) {
+            if (state.map) {
+                state.map.flyTo([lat, lng], zoom, { duration: 1.5 });
+            }
+        }
+
+        function recenterUserLocation() {
+            if (state.map) {
+                state.map.flyTo(state.userLocation, 13, { duration: 1 });
+            }
+        }
+
+        function getFilteredCatches() {
+            if (state.activeFilter === 'verified') return state.catches.filter(c => c.isVerified);
+            if (state.activeFilter === 'privacy') return state.catches.filter(c => c.privacyShield);
+            return state.catches;
+        }
+
+        function setPostFilter(filterType) {
+            state.activeFilter = filterType;
+            
+            // Highlight Buttons
+            ['all', 'verified', 'privacy'].forEach(f => {
+                const btn = document.getElementById('filter-' + f);
+                if (!btn) return;
+                if (f === filterType) {
+                    btn.classList.add('bg-cyan-500/30', 'text-cyan-200', 'font-bold');
+                    btn.classList.remove('bg-slate-900');
+                } else {
+                    btn.classList.remove('bg-cyan-500/30', 'text-cyan-200', 'font-bold');
+                    btn.classList.add('bg-slate-900');
+                }
+            });
+
+            renderCatchFeed();
+            renderMapMarkers();
+        }
+
+        function renderCatchFeed() {
+            const container = document.getElementById('catch-feed-container');
+            if (!container) return;
+
+            const items = getFilteredCatches();
+            container.innerHTML = '';
+
+            items.forEach(item => {
+                const card = document.createElement('div');
+                card.className = "glass-card rounded-xl p-3 flex flex-col space-y-2 border border-slate-800 hover:border-cyan-500/40 transition";
+
+                card.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <span class="font-bold text-xs ${item.isVerified ? 'text-yellow-300' : 'text-cyan-300'}">${item.author}</span>
+                            ${item.isVerified ? `<span class="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 font-bold">${item.creatorBadge}</span>` : ''}
+                        </div>
+                        <span class="text-[9px] text-slate-500">${item.timestamp}</span>
+                    </div>
+
+                    ${item.imageUrl ? `
+                        <div class="relative h-36 w-full rounded-lg overflow-hidden border border-slate-800">
+                            <img src="${item.imageUrl}" class="w-full h-full object-cover">
+                            ${item.privacyShield ? `<div class="absolute bottom-2 right-2 px-2 py-0.5 rounded-full bg-emerald-950/90 text-emerald-300 border border-emerald-500/50 text-[9px] flex items-center space-x-1"><i class="fa-solid fa-shield-halved"></i><span>Secret Spot Shield</span></div>` : ''}
+                        </div>
+                    ` : ''}
+
+                    <div class="flex items-center justify-between text-xs font-bold text-emerald-400">
+                        <span>${item.species}</span>
+                        <span class="text-slate-300 font-normal text-[11px]">${item.size}</span>
+                    </div>
+
+                    <p class="text-[10px] text-slate-300 leading-relaxed">${item.notes || ''}</p>
+
+                    <div class="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px]">
+                        <div class="flex items-center space-x-2">
+                            <button onclick="likePost(${item.id})" class="text-slate-400 hover:text-cyan-300 flex items-center space-x-1">
+                                <i class="fa-solid fa-water"></i>
+                                <span>Tight Lines (${item.likes})</span>
+                            </button>
+                            ${item.socialUrl ? `
+                                <a href="${item.socialUrl}" target="_blank" class="text-yellow-400 hover:underline flex items-center space-x-1">
+                                    <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
+                                    <span>Channel</span>
+                                </a>
+                            ` : ''}
+                        </div>
+                        <button onclick="openBragCardModal(${item.id})" class="px-2 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 border border-cyan-400/30 text-[9px] font-bold">
+                            <i class="fa-solid fa-share-nodes"></i> Brag Card
+                        </button>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
+        function likePost(id) {
+            const item = state.catches.find(c => c.id === id);
+            if (item) {
+                item.likes++;
+                renderCatchFeed();
+            }
+        }
+
+        function handleCreatorRegister(e) {
+            e.preventDefault();
+            const handle = document.getElementById('creator-handle').value;
+            const type = document.getElementById('creator-type').value;
+            const url = document.getElementById('creator-url').value;
+
+            alert(`Verification request submitted for ${handle}! Your profile will now feature the ${type} badge.`);
+            toggleModal('modal-creator', false);
+        }
+
+        function handlePostCatch(e) {
+            e.preventDefault();
+            const author = document.getElementById('post-author').value;
+            const species = document.getElementById('post-species').value;
+            const size = document.getElementById('post-size').value;
+            const rig = document.getElementById('post-rig').value;
+            const imageUrl = document.getElementById('post-image-url').value || 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&w=800&q=80';
+            const privacyShield = document.getElementById('post-privacy-shield').checked;
+
+            const newCatch = {
+                id: Date.now(),
+                author: author.startsWith('@') ? author : '@' + author,
+                isVerified: false,
+                creatorBadge: null,
+                socialUrl: null,
+                species: species,
+                size: size || 'Personal Best',
+                rig: rig || 'Standard Rig',
+                locationName: 'User Drop Spot',
+                lat: state.map.getCenter().lat,
+                lng: state.map.getCenter().lng,
+                privacyShield: privacyShield,
+                timestamp: 'Just now',
+                likes: 1,
+                imageUrl: imageUrl,
+                notes: 'Logged with SoCal Angler Hub 3D Bathymetry HUD.'
+            };
+
+            state.catches.unshift(newCatch);
+            renderCatchFeed();
+            renderMapMarkers();
+            toggleModal('modal-post-catch', false);
+            document.getElementById('drawer-logbook').classList.remove('translate-x-full');
+        }
+
+        let currentBragCatch = null;
+
+        function openBragCardModal(catchId) {
+            currentBragCatch = state.catches.find(c => c.id === catchId) || state.catches[0];
+            toggleModal('modal-brag-card', true);
+            renderBragCardCanvas();
+        }
+
+        function renderBragCardCanvas() {
+            const bCanvas = document.getElementById('brag-card-canvas');
+            if (!bCanvas || !currentBragCatch) return;
+            const bCtx = bCanvas.getContext('2d');
+
+            const w = bCanvas.width;
+            const h = bCanvas.height;
+
+            // Background Dark Gradient
+            const grad = bCtx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, '#040914');
+            grad.addColorStop(0.5, '#08142a');
+            grad.addColorStop(1, '#020710');
+            bCtx.fillStyle = grad;
+            bCtx.fillRect(0, 0, w, h);
+
+            // Cyber Border
+            bCtx.strokeStyle = '#00f0ff';
+            bCtx.lineWidth = 4;
+            bCtx.strokeRect(10, 10, w - 20, h - 20);
+
+            // Header Banner
+            bCtx.fillStyle = '#00f0ff';
+            bCtx.font = 'bold 20px "JetBrains Mono", monospace';
+            bCtx.fillText('SOCAL ANGLER HUB', 30, 45);
+
+            bCtx.fillStyle = '#39ff14';
+            bCtx.font = '12px "JetBrains Mono", monospace';
+            bCtx.fillText('TACTICAL CATCH VERIFIED', 30, 65);
+
+            // Author & Creator Badge
+            bCtx.fillStyle = currentBragCatch.isVerified ? '#ffe600' : '#ffffff';
+            bCtx.font = 'bold 16px "JetBrains Mono", monospace';
+            bCtx.fillText(currentBragCatch.author, 30, 100);
+
+            if (currentBragCatch.isVerified) {
+                bCtx.fillStyle = '#ffe600';
+                bCtx.font = '10px "JetBrains Mono", monospace';
+                bCtx.fillText(`[ ${currentBragCatch.creatorBadge} ]`, 30, 115);
+            }
+
+            // Species & Size Banner
+            bCtx.fillStyle = 'rgba(0, 240, 255, 0.1)';
+            bCtx.fillRect(30, 135, w - 60, 70);
+            bCtx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+            bCtx.strokeRect(30, 135, w - 60, 70);
+
+            bCtx.fillStyle = '#39ff14';
+            bCtx.font = 'bold 22px "JetBrains Mono", monospace';
+            bCtx.fillText(currentBragCatch.species.toUpperCase(), 45, 165);
+
+            bCtx.fillStyle = '#ffffff';
+            bCtx.font = '14px "JetBrains Mono", monospace';
+            bCtx.fillText(currentBragCatch.size, 45, 190);
+
+            // Catch Image Drawing
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.src = currentBragCatch.imageUrl;
+            img.onload = function() {
+                bCtx.drawImage(img, 30, 220, w - 60, 320);
+
+                // Overlay Telemetry Watermark on Image
+                bCtx.fillStyle = 'rgba(4, 9, 20, 0.85)';
+                bCtx.fillRect(30, 490, w - 60, 50);
+
+                bCtx.fillStyle = '#00f0ff';
+                bCtx.font = '11px "JetBrains Mono", monospace';
+                bCtx.fillText(`LOC: ${currentBragCatch.privacyShield ? 'PROTECTED PRIVACY SHIELD' : currentBragCatch.locationName}`, 40, 510);
+                bCtx.fillText(`RIG: ${currentBragCatch.rig}`, 40, 528);
+
+                // Footer Stamp
+                bCtx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                bCtx.font = '10px "JetBrains Mono", monospace';
+                bCtx.fillText('SOCALANGLERHUB.COM • 3D OCEANOGRAPHY PLATFORM', 30, 625);
+            };
+        }
+
+        function downloadBragCard() {
+            const bCanvas = document.getElementById('brag-card-canvas');
+            if (!bCanvas) return;
+
+            const link = document.createElement('a');
+            link.download = `socal-angler-brag-card-${Date.now()}.png`;
+            link.href = bCanvas.toDataURL('image/png');
+            link.click();
+        }
+    </script>
+</body>
+</html>
